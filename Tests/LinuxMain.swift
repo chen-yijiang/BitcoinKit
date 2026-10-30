@@ -31,4 +31,11 @@ XCTMain([
     testCase([("BitcoinKitTests.BitcoinKitTests.testSign", BitcoinKitTests.testSign)]),
     testCase([("BitcoinKitTests.BitcoinKitTests.testSignTransaction1", BitcoinKitTests.testSignTransaction1)]),
     testCase([("BitcoinKitTests.BitcoinKitTests.testWIF", BitcoinKitTests.testWIF)]),
+    testCase([
+        ("BitcoinKitTests.PsbtBoundsTests.testEveryTruncatedPrefixOfValidPsbtThrows", PsbtBoundsTests.testEveryTruncatedPrefixOfValidPsbtThrows),
+        ("BitcoinKitTests.PsbtBoundsTests.testValidMagicWithTruncatedMapValueThrows", PsbtBoundsTests.testValidMagicWithTruncatedMapValueThrows),
+        ("BitcoinKitTests.PsbtBoundsTests.testTruncatedUnsignedTransactionThrows", PsbtBoundsTests.testTruncatedUnsignedTransactionThrows),
+        ("BitcoinKitTests.PsbtBoundsTests.testNonWitnessUtxoOutputIndexIsCheckedDuringPsbtParsing", PsbtBoundsTests.testNonWitnessUtxoOutputIndexIsCheckedDuringPsbtParsing),
+        ("BitcoinKitTests.PsbtBoundsTests.testSigningAndFeeCalculationThrowForOutOfRangePreviousOutput", PsbtBoundsTests.testSigningAndFeeCalculationThrowForOutOfRangePreviousOutput),
+    ]),
 ])

@@ -14,76 +14,40 @@ extension Psbt {
     }
 
     public static func deserialize(_ buffer: Data) throws -> Psbt {
-        let byteStream = ByteStream(buffer)
+        var reader = BoundedByteReader(buffer)
 
-        guard byteStream.read(UInt32.self, bigEndian: true) == 0x70736274, byteStream.read(UInt8.self) == 0xff else {
+        guard try reader.read(UInt32.self, bigEndian: true) == 0x70736274,
+              try reader.read(UInt8.self) == 0xff else {
             throw PsbtSerializeError.invalidMagicNumber
         }
 
-        var globalKeyIndex = [String: Bool]()
-        var globalMapKeyVals = [PsbtKeyValue]()
-        while try byteStream.read(UInt8.self) != 0 {
-            byteStream.advance(by: -1)
+        let globalMapKeyVals = try readMap(from: &reader)
 
-            let key = try byteStream.read(Data.self)
-            let value = try byteStream.read(Data.self)
-            if globalKeyIndex[key.hex] == true {
-                throw PsbtSerializeError.keyMustUnique(key.hex)
-            }
-            globalKeyIndex[key.hex] = true
-            globalMapKeyVals.append(PsbtKeyValue(key, value))
-        }
-
-        let unsignedTxMaps = globalMapKeyVals.filter { $0.key.bytes[0] == PsbtGlobalTypes.UNSIGNED_TX.rawValue }
+        let unsignedTxMaps = globalMapKeyVals.filter { $0.key.first == PsbtGlobalTypes.UNSIGNED_TX.rawValue }
         guard unsignedTxMaps.count == 1 else {
             throw PsbtSerializeError.multiUnsignedTx
         }
 
-        let unsigned = Transaction.deserialize(unsignedTxMaps[0].value)
+        let unsigned = try Transaction.deserializeChecked(unsignedTxMaps[0].value)
         let psbt = Psbt(tx: unsigned)
 
         var inputKeyVals = [[PsbtKeyValue]]()
         var outputKeyVals = [[PsbtKeyValue]]()
 
         for _ in 0..<unsigned.inputs.count {
-            var inputKeyIndex = [String: Bool]()
-            var input = [PsbtKeyValue]()
-            while try byteStream.read(UInt8.self) != 0 {
-                byteStream.advance(by: -1)
-
-                let key = try byteStream.read(Data.self)
-                let value = try byteStream.read(Data.self)
-
-                if inputKeyIndex[key.hex] == true {
-                    throw PsbtSerializeError.keyMustUnique(key.hex)
-                }
-                inputKeyIndex[key.hex] = true
-                input.append(PsbtKeyValue(key, value))
-            }
-            inputKeyVals.append(input)
+            inputKeyVals.append(try readMap(from: &reader))
         }
 
         for _ in 0..<unsigned.outputs.count {
-            var outputKeyIndex = [String: Bool]()
-            var output = [PsbtKeyValue]()
-            while try byteStream.read(UInt8.self) != 0 {
-                byteStream.advance(by: -1)
-
-                let key = try byteStream.read(Data.self)
-                let value = try byteStream.read(Data.self)
-
-                if outputKeyIndex[key.hex] == true {
-                    throw PsbtSerializeError.keyMustUnique(key.hex)
-                }
-                outputKeyIndex[key.hex] = true
-                output.append(PsbtKeyValue(key, value))
-            }
-            outputKeyVals.append(output)
+            outputKeyVals.append(try readMap(from: &reader))
         }
+
+        guard reader.remainingCount == 0 else { throw BoundedByteReaderError.trailingData }
 
         var txExist = false
         for keyVals in globalMapKeyVals {
-            switch keyVals.key[0] {
+            guard let keyType = keyVals.key.first else { throw PsbtSerializeError.unexpectedEnd }
+            switch keyType {
             case PsbtGlobalTypes.UNSIGNED_TX.rawValue:
                 guard !txExist else {
                     throw PsbtSerializeError.multiUnsignedTx
@@ -110,7 +74,26 @@ extension Psbt {
             psbt.outputs.append(try PsbtOutputUpdate.deserialize(from: outputKeyVals[i]))
         }
 
+        try psbt.validateNonWitnessUtxoOutputIndexes()
+
         return psbt
+    }
+
+    private static func readMap(from reader: inout BoundedByteReader) throws -> [PsbtKeyValue] {
+        var seenKeys = Set<String>()
+        var keyValues = [PsbtKeyValue]()
+
+        while true {
+            let key = try reader.readVarBytes()
+            if key.isEmpty { return keyValues }
+
+            let value = try reader.readVarBytes()
+            let keyHex = key.hex
+            guard seenKeys.insert(keyHex).inserted else {
+                throw PsbtSerializeError.keyMustUnique(keyHex)
+            }
+            keyValues.append(PsbtKeyValue(key, value))
+        }
     }
 }
 

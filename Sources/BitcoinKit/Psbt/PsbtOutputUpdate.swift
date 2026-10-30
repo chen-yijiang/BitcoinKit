@@ -52,7 +52,8 @@ public class PsbtOutputUpdate {
     public static func deserialize(from keyVals: [PsbtKeyValue]) throws -> PsbtOutputUpdate {
         let update = PsbtOutputUpdate()
         for keyVal in keyVals {
-            switch PsbtOutputTypes(rawValue: keyVal.key[0]) {
+            guard let keyType = keyVal.key.first else { throw PsbtSerializeError.unexpectedEnd }
+            switch PsbtOutputTypes(rawValue: keyType) {
             case .REDEEM_SCRIPT:
                 try checkKeyBuffer(keyBuf: keyVal.key, key: PsbtOutputTypes.REDEEM_SCRIPT)
                 guard update.redeemScript == nil else {

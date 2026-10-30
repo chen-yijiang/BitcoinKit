@@ -36,18 +36,24 @@ public struct GlobalXPub {
 }
 
 func decodeGlobalXpub(keyVal: PsbtKeyValue) throws -> GlobalXPub {
-    let pubkey = keyVal.key[1...]
-    guard keyVal.key.count == 79, [2, 3].contains(keyVal.key[46]), (keyVal.value.count / 4) % 1 == 0 else {
+    guard keyVal.key.count == 79,
+          [2, 3].contains(keyVal.key[46]),
+          keyVal.value.count >= 4,
+          (keyVal.value.count - 4) % 4 == 0 else {
         throw PsbtSerializeError.unexpectedEnd
     }
+    let pubkey = keyVal.key[1...]
     var path = "m"
-    for i in 0..<(keyVal.value.count / 4 - 1) {
-        let val = ByteStream(keyVal.value[(i * 4 + 4 + keyVal.value.startIndex)...]).read(UInt32.self)
+    for i in 0..<((keyVal.value.count - 4) / 4) {
+        var reader = BoundedByteReader(Data(keyVal.value[(i * 4 + 4)..<(i * 4 + 8)]))
+        let val = try reader.read(UInt32.self)
         let isHard = (val & 0x80000000) != 0
         let idx = val & 0x7fffffff
         path += "/"
         path += String(idx, radix: 10)
         isHard ? path +=  "'" : ()
     }
-    return .init(extendedPubkey: keyVal.key[1...], masterFingerprint: keyVal.value[0..<4], path: path)
+    return .init(extendedPubkey: pubkey,
+                 masterFingerprint: Data(keyVal.value[0..<4]),
+                 path: path)
 }

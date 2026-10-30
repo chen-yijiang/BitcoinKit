@@ -77,6 +77,19 @@ public struct TransactionOutput {
         let lockingScript = byteStream.read(Data.self, count: Int(scriptLength.underlyingValue))
         return TransactionOutput(value: value, lockingScript: lockingScript)
     }
+
+    static func deserializeChecked(_ reader: inout BoundedByteReader) throws -> TransactionOutput {
+        let value = try reader.read(UInt64.self)
+        let lockingScript = try reader.readVarBytes()
+        return TransactionOutput(value: value, lockingScript: lockingScript)
+    }
+
+    static func deserializeChecked(_ data: Data) throws -> TransactionOutput {
+        var reader = BoundedByteReader(data)
+        let output = try deserializeChecked(&reader)
+        guard reader.remainingCount == 0 else { throw BoundedByteReaderError.trailingData }
+        return output
+    }
 }
 
 public typealias WitnessUtxo = TransactionOutput

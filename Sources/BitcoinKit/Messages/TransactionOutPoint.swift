@@ -48,4 +48,10 @@ public struct TransactionOutPoint {
         let index = byteStream.read(UInt32.self)
         return TransactionOutPoint(hash: hash, index: index)
     }
+
+    static func deserializeChecked(_ reader: inout BoundedByteReader) throws -> TransactionOutPoint {
+        let hash = try reader.readBytes(count: 32)
+        let index = try reader.read(UInt32.self)
+        return TransactionOutPoint(hash: hash, index: index)
+    }
 }

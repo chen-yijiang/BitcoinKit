@@ -70,6 +70,13 @@ public struct TransactionInput {
         let sequence = byteStream.read(UInt32.self)
         return TransactionInput(previousOutput: previousOutput, sequence: sequence, signatureScript: signatureScript)
     }
+
+    static func deserializeChecked(_ reader: inout BoundedByteReader) throws -> TransactionInput {
+        let previousOutput = try TransactionOutPoint.deserializeChecked(&reader)
+        let signatureScript = try reader.readVarBytes()
+        let sequence = try reader.read(UInt32.self)
+        return TransactionInput(previousOutput: previousOutput, sequence: sequence, signatureScript: signatureScript)
+    }
 }
 
 extension TransactionInput {

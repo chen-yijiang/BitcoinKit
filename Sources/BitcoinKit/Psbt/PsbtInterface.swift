@@ -53,13 +53,12 @@ public struct TapTree {
     }
 
     public static func deserialize(_ keyVal: PsbtKeyValue) throws -> TapTree {
-        let byteStream = ByteStream(keyVal.value)
-
+        var reader = BoundedByteReader(keyVal.value)
         var vector = [TapLeaf]()
-        while byteStream.offset < keyVal.value.count {
-            let depth = byteStream.read(UInt8.self)
-            let leafVersion = byteStream.read(UInt8.self)
-            let script = byteStream.read(Data.self)
+        while reader.remainingCount > 0 {
+            let depth = try reader.read(UInt8.self)
+            let leafVersion = try reader.read(UInt8.self)
+            let script = try reader.readVarBytes()
             vector.append(
                 .init(leafVersion: leafVersion, script: script, depth: depth)
             )
@@ -111,7 +110,9 @@ public struct TapLeafScript {
     }
 
     public static func deserialize(_ keyVal: PsbtKeyValue) throws -> TapLeafScript {
-        guard (keyVal.key.count - 2) % 32 == 0 else {
+        guard keyVal.key.count >= 34,
+              (keyVal.key.count - 34) % 32 == 0,
+              !keyVal.value.isEmpty else {
             throw PsbtSerializeError.invalidInputFormat(.TAP_LEAF_SCRIPT, keyVal.key)
         }
         let leafVersion = keyVal.value.last!
@@ -177,20 +178,26 @@ public struct Bip32Derivation {
     }
 
     public static func deserialize(_ keyVal: PsbtKeyValue, isValid: (Data) -> Bool = isValidDERKey) throws -> Bip32Derivation {
+        guard keyVal.key.count > 1,
+              keyVal.value.count >= 4,
+              (keyVal.value.count - 4) % 4 == 0 else {
+            throw PsbtSerializeError.invalidInputFormat(.BIP32_DERIVATION, keyVal.key)
+        }
         let pubkey = keyVal.key[1...]
-        guard isValid(pubkey), (keyVal.value.count / 4) % 1 == 0 else {
+        guard isValid(Data(pubkey)) else {
             throw PsbtSerializeError.invalidInputFormat(.BIP32_DERIVATION, keyVal.key)
         }
         var path = "m"
-        for i in 0..<(keyVal.value.count / 4 - 1) {
-            let val = ByteStream(keyVal.value[(i * 4 + 4 + keyVal.value.startIndex)...]).read(UInt32.self)
+        for i in 0..<((keyVal.value.count - 4) / 4) {
+            var reader = BoundedByteReader(Data(keyVal.value[(i * 4 + 4)..<(i * 4 + 8)]))
+            let val = try reader.read(UInt32.self)
             let isHard = (val & 0x80000000) != 0
             let idx = val & 0x7fffffff
             path += "/"
             path += String(idx, radix: 10)
             isHard ? path +=  "'" : ()
         }
-        return .init(masterFingerprint: keyVal.value[keyVal.value.startIndex ..< keyVal.value.startIndex + 4], pubkey: pubkey, path: path)
+        return .init(masterFingerprint: Data(keyVal.value[0..<4]), pubkey: Data(pubkey), path: path)
     }
 }
 
@@ -223,15 +230,18 @@ public struct TapBip32Derivation {
     }
 
     public static func deserialize(_ keyVal: PsbtKeyValue) throws -> TapBip32Derivation {
-        let mHashs = keyVal.value.to(type: VarInt.self)
-        let mHashlens = mHashs.encodingLength
-        let bip32Derivation = try Bip32Derivation.deserialize(PsbtKeyValue(keyVal.key, keyVal.value[(mHashlens + UInt8(mHashs.underlyingValue) * 32)...]), isValid: isValidBIP340Key)
+        var reader = BoundedByteReader(keyVal.value)
+        let hashCount = try reader.readCount(minimumElementSize: 32)
         var leafHashes = [Data]()
-        var offset = mHashlens
-        for _ in 0..<mHashs.underlyingValue {
-            leafHashes.append(keyVal.value[offset ..< offset + 32])
-            offset += 32
+        leafHashes.reserveCapacity(hashCount)
+        for _ in 0..<hashCount {
+            leafHashes.append(try reader.readBytes(count: 32))
         }
+        let derivationValue = try reader.readRemainingBytes()
+        let bip32Derivation = try Bip32Derivation.deserialize(
+            PsbtKeyValue(keyVal.key, derivationValue),
+            isValid: isValidBIP340Key
+        )
         return .init(bip32Derivation: bip32Derivation, leafHashes: leafHashes)
     }
 }

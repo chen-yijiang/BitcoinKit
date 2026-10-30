@@ -41,6 +41,18 @@ func scriptWitnessToWitnessStack(witness: Data) -> [Data] {
     return vector
 }
 
+func parseScriptWitness(_ witness: Data) throws -> [Data] {
+    var reader = BoundedByteReader(witness)
+    let count = try reader.readCount(minimumElementSize: 1)
+    var vector = [Data]()
+    vector.reserveCapacity(count)
+    for _ in 0..<count {
+        vector.append(try reader.readVarBytes())
+    }
+    guard reader.remainingCount == 0 else { throw BoundedByteReaderError.trailingData }
+    return vector
+}
+
 public func isValidDERKey(pubkey: Data) -> Bool {
     (pubkey.count == 33 && [2, 3].contains(pubkey.first)) ||
     (pubkey.count == 65 && 4 == pubkey.first);

@@ -122,6 +122,50 @@ public class Transaction {
         return deserialize(byteStream)
     }
 
+    /// Deserializes a transaction while checking every read against the input length.
+    /// Use this for transactions embedded in an untrusted PSBT.
+    static func deserializeChecked(_ data: Data) throws -> Transaction {
+        var reader = BoundedByteReader(data)
+        let version = try reader.read(UInt32.self)
+
+        let marker = try reader.read(UInt8.self)
+        let flag = try reader.read(UInt8.self)
+        let hasWitness = marker == Self.ADVANCED_TRANSACTION_MARKER && flag == Self.ADVANCED_TRANSACTION_FLAG
+        if !hasWitness {
+            try reader.rewind(by: 2)
+        }
+
+        let inputCount = try reader.readCount(minimumElementSize: 41)
+        var inputs = [TransactionInput]()
+        inputs.reserveCapacity(inputCount)
+        for _ in 0..<inputCount {
+            inputs.append(try TransactionInput.deserializeChecked(&reader))
+        }
+
+        let outputCount = try reader.readCount(minimumElementSize: 9)
+        var outputs = [TransactionOutput]()
+        outputs.reserveCapacity(outputCount)
+        for _ in 0..<outputCount {
+            outputs.append(try TransactionOutput.deserializeChecked(&reader))
+        }
+
+        if hasWitness {
+            for index in inputs.indices {
+                let itemCount = try reader.readCount(minimumElementSize: 1)
+                var witness = [Data]()
+                witness.reserveCapacity(itemCount)
+                for _ in 0..<itemCount {
+                    witness.append(try reader.readVarBytes())
+                }
+                inputs[index].witness = witness
+            }
+        }
+
+        let lockTime = try reader.read(UInt32.self)
+        guard reader.remainingCount == 0 else { throw BoundedByteReaderError.trailingData }
+        return Transaction(version: version, inputs: inputs, outputs: outputs, lockTime: lockTime)
+    }
+
     static func deserialize(_ byteStream: ByteStream) -> Transaction {
         let version = byteStream.read(UInt32.self)
 

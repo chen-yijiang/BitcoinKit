@@ -139,7 +139,8 @@ public class PsbtInputUpdate {
     public static func deserialize(from keyVals: [PsbtKeyValue]) throws -> PsbtInputUpdate {
         let update = PsbtInputUpdate()
         for keyVal in keyVals {
-            switch PsbtInputTypes(rawValue: keyVal.key[0]) {
+            guard let keyType = keyVal.key.first else { throw PsbtSerializeError.unexpectedEnd }
+            switch PsbtInputTypes(rawValue: keyType) {
             case .NON_WITNESS_UTXO:
                 try checkKeyBuffer(keyBuf: keyVal.key, key: .NON_WITNESS_UTXO)
                 guard update.nonWitnessUtxo == nil else {
@@ -151,7 +152,7 @@ public class PsbtInputUpdate {
                 guard update.witnessUtxo == nil else {
                     throw PsbtSerializeError.multipleInputKey(.WITNESS_UTXO)
                 }
-                update.witnessUtxo = WitnessUtxo.deserialize(.init(keyVal.value))
+                update.witnessUtxo = try TransactionOutput.deserializeChecked(keyVal.value)
             case .PARTIAL_SIG:
                 if update.partialSig == nil {
                     update.partialSig = []
@@ -162,7 +163,14 @@ public class PsbtInputUpdate {
                 guard update.sighashType == nil else {
                     throw PsbtSerializeError.multipleInputKey(.SIGHASH_TYPE)
                 }
-                update.sighashType = ByteStream(keyVal.value).read(UInt8.self)
+                guard keyVal.value.count == MemoryLayout<UInt32>.size else {
+                    throw PsbtSerializeError.invalidInputFormat(.SIGHASH_TYPE, keyVal.value)
+                }
+                var reader = BoundedByteReader(keyVal.value)
+                guard let sighashType = UInt8(exactly: try reader.read(UInt32.self)) else {
+                    throw PsbtSerializeError.invalidInputFormat(.SIGHASH_TYPE, keyVal.value)
+                }
+                update.sighashType = sighashType
             case .REDEEM_SCRIPT:
                 try checkKeyBuffer(keyBuf: keyVal.key, key: PsbtInputTypes.REDEEM_SCRIPT)
                 guard update.redeemScript == nil else {
@@ -185,6 +193,7 @@ public class PsbtInputUpdate {
                 update.finalScriptSig = keyVal.value
             case .FINAL_SCRIPTWITNESS:
                 try checkKeyBuffer(keyBuf: keyVal.key, key: .FINAL_SCRIPTWITNESS)
+                _ = try parseScriptWitness(keyVal.value)
                 update.finalScriptWitness = keyVal.value
             case .POR_COMMITMENT:
                 try checkKeyBuffer(keyBuf: keyVal.key, key: .POR_COMMITMENT)

@@ -45,7 +45,7 @@ public class Psbt {
     }
 
     public func signInput(with pk: PrivateKey, at index: Int, sigHashTypes: [BTCSighashType]? = nil) throws {
-        guard index < inputs.count else {
+        guard inputs.indices.contains(index), tx.inputs.indices.contains(index) else {
             throw PsbtError.indexOutOfBounds
         }
         if inputs[index].isTaprootInput {
@@ -93,7 +93,7 @@ public class Psbt {
     }
 
     public func finalizeInput(index: Int) throws {
-        guard index < inputs.count else {
+        guard inputs.indices.contains(index), tx.inputs.indices.contains(index) else {
             throw PsbtError.indexOutOfBounds
         }
         if inputs[index].isTaprootInput {
@@ -139,8 +139,7 @@ public class Psbt {
         if let witnessUtxo = inputs[index].witnessUtxo {
             prevOut = witnessUtxo
         } else if let nonWitnessUtxo = inputs[index].nonWitnessUtxo {
-            let _tx = Transaction.deserialize(nonWitnessUtxo)
-            prevOut = _tx.outputs[Int(self.tx.inputs[index].previousOutput.index)]
+            prevOut = try previousOutput(for: index, in: nonWitnessUtxo)
         } else {
             throw PsbtError.utxoInputItemRequired
         }
@@ -188,8 +187,7 @@ public class Psbt {
             script = redeemScript
         } else {
             if let nonWitnessUtxo = input.nonWitnessUtxo {
-                let _tx = Transaction.deserialize(nonWitnessUtxo)
-                script = _tx.outputs[Int(self.tx.inputs[index].previousOutput.index)].lockingScript
+                script = try previousOutput(for: index, in: nonWitnessUtxo).lockingScript
             } else if let witnessUtxo = input.witnessUtxo {
                 script = witnessUtxo.lockingScript
             } else {
@@ -267,15 +265,37 @@ public class Psbt {
     }
 
     public func getScriptAndAmountFromUtxo(input: PsbtInputUpdate, index: Int) throws -> (script: Data, value: UInt64) {
+        guard inputs.indices.contains(index), tx.inputs.indices.contains(index) else {
+            throw PsbtError.indexOutOfBounds
+        }
         if let witnessUtxo = input.witnessUtxo {
             return (witnessUtxo.lockingScript, witnessUtxo.value)
         } else if let nonWitnessUtxo = input.nonWitnessUtxo {
-            let _tx = Transaction.deserialize(nonWitnessUtxo)
-            let out = _tx.outputs[Int(self.tx.inputs[index].previousOutput.index)]
+            let out = try previousOutput(for: index, in: nonWitnessUtxo)
             return (out.lockingScript, out.value)
         } else {
             throw PsbtError.utxoInputItemRequired
         }
+    }
+
+    func validateNonWitnessUtxoOutputIndexes() throws {
+        for (index, input) in inputs.enumerated() {
+            guard let nonWitnessUtxo = input.nonWitnessUtxo else { continue }
+            _ = try previousOutput(for: index, in: nonWitnessUtxo)
+        }
+    }
+
+    private func previousOutput(for inputIndex: Int, in nonWitnessUtxo: Data) throws -> TransactionOutput {
+        guard inputs.indices.contains(inputIndex), tx.inputs.indices.contains(inputIndex) else {
+            throw PsbtError.indexOutOfBounds
+        }
+        let previousTransaction = try Transaction.deserializeChecked(nonWitnessUtxo)
+        let previousOutputIndex = tx.inputs[inputIndex].previousOutput.index
+        guard let outputIndex = Int(exactly: previousOutputIndex),
+              previousTransaction.outputs.indices.contains(outputIndex) else {
+            throw PsbtError.indexOutOfBounds
+        }
+        return previousTransaction.outputs[outputIndex]
     }
 
     private func checkSighashTypeAllowed(sigHashType: BTCSighashType, sigHashTypes: [BTCSighashType]?) throws {
@@ -301,16 +321,30 @@ public class Psbt {
     }
 
     public var fee: UInt64 {
+        (try? calculateFee()) ?? 0
+    }
+
+    public func calculateFee() throws -> UInt64 {
         var inputAmount: UInt64 = 0
-        inputs.enumerated().forEach { idx, update in
+        for (idx, update) in inputs.enumerated() {
             if let witnessUtxo = update.witnessUtxo {
-                inputAmount += witnessUtxo.value
+                let (sum, overflow) = inputAmount.addingReportingOverflow(witnessUtxo.value)
+                guard !overflow else { throw PsbtError.invalidTransactionAmounts }
+                inputAmount = sum
             } else if let nonWitnessUtxo = update.nonWitnessUtxo {
-                let _tx = Transaction.deserialize(nonWitnessUtxo)
-                inputAmount += _tx.outputs[Int(self.tx.inputs[idx].previousOutput.index)].value
+                let output = try previousOutput(for: idx, in: nonWitnessUtxo)
+                let (sum, overflow) = inputAmount.addingReportingOverflow(output.value)
+                guard !overflow else { throw PsbtError.invalidTransactionAmounts }
+                inputAmount = sum
             }
         }
-        let outputAmount = tx.outputs.reduce(0, { $0 + $1.value })
+        var outputAmount: UInt64 = 0
+        for output in tx.outputs {
+            let (sum, overflow) = outputAmount.addingReportingOverflow(output.value)
+            guard !overflow else { throw PsbtError.invalidTransactionAmounts }
+            outputAmount = sum
+        }
+        guard inputAmount >= outputAmount else { throw PsbtError.invalidTransactionAmounts }
         return inputAmount - outputAmount
     }
 }

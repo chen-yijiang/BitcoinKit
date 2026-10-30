@@ -20,6 +20,7 @@ public enum PsbtSerializeError: Error {
 
 public enum PsbtError: Error {
     case indexOutOfBounds
+    case invalidTransactionAmounts
     case sigHashTypeMissMatch
     case utxoInputItemRequired
     case p2shMissingRedeemScript
